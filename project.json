@@ -1,0 +1,15 @@
+{
+  "name": "test-todo-api",
+  "language": "javascript",
+  "framework": "express",
+  "test_command": "npm test",
+  "lint_command": "npm run lint",
+  "build_command": "npm run build",
+  "dev_command": "npm run dev",
+  "coverage_threshold": 80,
+  "patterns": {
+    "api_routes": "src/routes/**/*.js",
+    "tests": "tests/**/*.test.js",
+    "models": "src/models/**/*.js"
+  }
+}

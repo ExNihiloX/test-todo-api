@@ -1,0 +1,248 @@
+{
+  "project": "Todo API",
+  "description": "Simple REST API for managing todo items",
+  "default_branch": "main",
+  "api_contracts": {
+    "GET /api/todos": {
+      "request": {},
+      "response": {
+        "todos": [
+          {
+            "id": "string",
+            "title": "string",
+            "completed": "boolean"
+          }
+        ]
+      },
+      "errors": [
+        500
+      ]
+    },
+    "POST /api/todos": {
+      "request": {
+        "title": "string"
+      },
+      "response": {
+        "id": "string",
+        "title": "string",
+        "completed": "boolean"
+      },
+      "errors": [
+        400,
+        500
+      ]
+    },
+    "PUT /api/todos/:id": {
+      "request": {
+        "title": "string",
+        "completed": "boolean"
+      },
+      "response": {
+        "id": "string",
+        "title": "string",
+        "completed": "boolean"
+      },
+      "errors": [
+        400,
+        404,
+        500
+      ]
+    },
+    "DELETE /api/todos/:id": {
+      "request": {},
+      "response": {
+        "success": "boolean"
+      },
+      "errors": [
+        404,
+        500
+      ]
+    }
+  },
+  "features": [
+    {
+      "id": "todo-001",
+      "name": "Express server setup with health endpoint",
+      "description": "Basic Express server with /health endpoint",
+      "priority": 1,
+      "workflow_type": "direct",
+      "branch": "feature/todo-001",
+      "status": "pending",
+      "depends_on": [],
+      "api_endpoints": [],
+      "packages_needed": [
+        "express"
+      ],
+      "env_vars_needed": [
+        "PORT"
+      ],
+      "acceptance_criteria": [
+        "Express server starts on PORT",
+        "GET /health returns 200 OK",
+        "Graceful shutdown on SIGTERM"
+      ],
+      "claimed_by": null,
+      "claimed_at": null,
+      "completed_at": null,
+      "pr_url": null,
+      "ci_status": null,
+      "ci_attempts": 0
+    },
+    {
+      "id": "todo-002",
+      "name": "In-memory todo storage",
+      "description": "Simple in-memory array storage for todos",
+      "priority": 2,
+      "workflow_type": "tdd",
+      "branch": "feature/todo-002",
+      "status": "pending",
+      "depends_on": [],
+      "api_endpoints": [],
+      "packages_needed": [
+        "uuid"
+      ],
+      "env_vars_needed": [],
+      "acceptance_criteria": [
+        "TodoStore class with CRUD methods",
+        "Generates UUID for new todos",
+        "Returns null for non-existent todos"
+      ],
+      "claimed_by": null,
+      "claimed_at": null,
+      "completed_at": null,
+      "pr_url": null,
+      "ci_status": null,
+      "ci_attempts": 0
+    },
+    {
+      "id": "todo-003",
+      "name": "GET /api/todos endpoint",
+      "description": "List all todos endpoint",
+      "priority": 3,
+      "workflow_type": "tdd",
+      "branch": "feature/todo-003",
+      "status": "pending",
+      "depends_on": [
+        "todo-001",
+        "todo-002"
+      ],
+      "api_endpoints": [
+        "GET /api/todos"
+      ],
+      "packages_needed": [],
+      "env_vars_needed": [],
+      "acceptance_criteria": [
+        "Returns array of todos",
+        "Returns empty array if no todos",
+        "Response includes id, title, completed fields"
+      ],
+      "claimed_by": null,
+      "claimed_at": null,
+      "completed_at": null,
+      "pr_url": null,
+      "ci_status": null,
+      "ci_attempts": 0
+    },
+    {
+      "id": "todo-004",
+      "name": "POST /api/todos endpoint",
+      "description": "Create new todo endpoint",
+      "priority": 3,
+      "workflow_type": "tdd",
+      "branch": "feature/todo-004",
+      "status": "pending",
+      "depends_on": [
+        "todo-001",
+        "todo-002"
+      ],
+      "api_endpoints": [
+        "POST /api/todos"
+      ],
+      "packages_needed": [],
+      "env_vars_needed": [],
+      "acceptance_criteria": [
+        "Creates todo with title from body",
+        "Returns 400 if title missing",
+        "Sets completed to false by default",
+        "Returns created todo with id"
+      ],
+      "claimed_by": null,
+      "claimed_at": null,
+      "completed_at": null,
+      "pr_url": null,
+      "ci_status": null,
+      "ci_attempts": 0
+    },
+    {
+      "id": "todo-005",
+      "name": "PUT /api/todos/:id endpoint",
+      "description": "Update existing todo endpoint",
+      "priority": 4,
+      "workflow_type": "tdd",
+      "branch": "feature/todo-005",
+      "status": "pending",
+      "depends_on": [
+        "todo-003",
+        "todo-004"
+      ],
+      "api_endpoints": [
+        "PUT /api/todos/:id"
+      ],
+      "packages_needed": [],
+      "env_vars_needed": [],
+      "acceptance_criteria": [
+        "Updates todo title and/or completed",
+        "Returns 404 if todo not found",
+        "Returns updated todo"
+      ],
+      "claimed_by": null,
+      "claimed_at": null,
+      "completed_at": null,
+      "pr_url": null,
+      "ci_status": null,
+      "ci_attempts": 0
+    },
+    {
+      "id": "todo-006",
+      "name": "DELETE /api/todos/:id endpoint",
+      "description": "Delete todo endpoint",
+      "priority": 4,
+      "workflow_type": "tdd",
+      "branch": "feature/todo-006",
+      "status": "pending",
+      "depends_on": [
+        "todo-003",
+        "todo-004"
+      ],
+      "api_endpoints": [
+        "DELETE /api/todos/:id"
+      ],
+      "packages_needed": [],
+      "env_vars_needed": [],
+      "acceptance_criteria": [
+        "Deletes todo by id",
+        "Returns 404 if todo not found",
+        "Returns success: true on delete"
+      ],
+      "claimed_by": null,
+      "claimed_at": null,
+      "completed_at": null,
+      "pr_url": null,
+      "ci_status": null,
+      "ci_attempts": 0
+    }
+  ],
+  "integration_tests": [
+    {
+      "name": "Full CRUD cycle",
+      "description": "Create -> List -> Update -> Delete flow",
+      "features": [
+        "todo-003",
+        "todo-004",
+        "todo-005",
+        "todo-006"
+      ],
+      "status": "pending"
+    }
+  ]
+}
