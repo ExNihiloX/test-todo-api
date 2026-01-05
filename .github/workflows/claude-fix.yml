@@ -1,0 +1,181 @@
+name: Claude Auto-Fix
+
+on:
+  workflow_run:
+    workflows: ["Claude CI/CD Pipeline"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  fix-if-failed:
+    name: Auto-Fix CI Failures
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch != 'main' &&
+      github.event.workflow_run.head_branch != 'master'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get failure logs
+        id: logs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the failed workflow run logs
+          gh run view ${{ github.event.workflow_run.id }} --log-failed > failure.log 2>&1 || true
+
+          # Also capture test output
+          npm test 2>&1 | tail -100 > test-output.log || true
+          npm run lint 2>&1 | tail -50 > lint-output.log || true
+
+          # Combine logs
+          echo "=== CI FAILURE LOG ===" > combined.log
+          cat failure.log >> combined.log
+          echo "" >> combined.log
+          echo "=== TEST OUTPUT ===" >> combined.log
+          cat test-output.log >> combined.log
+          echo "" >> combined.log
+          echo "=== LINT OUTPUT ===" >> combined.log
+          cat lint-output.log >> combined.log
+
+      - name: Check CI attempts
+        id: attempts
+        run: |
+          if [[ -f prd.json ]]; then
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            FEATURE_ID=$(echo "$BRANCH" | grep -oE 'feature/[^/]+' | sed 's/feature\///' || echo "")
+
+            if [[ -n "$FEATURE_ID" ]]; then
+              ATTEMPTS=$(jq -r --arg id "$FEATURE_ID" '.features[] | select(.id == $id) | .ci_attempts // 0' prd.json)
+              echo "attempts=$ATTEMPTS" >> $GITHUB_OUTPUT
+              echo "feature_id=$FEATURE_ID" >> $GITHUB_OUTPUT
+
+              if [[ "$ATTEMPTS" -ge 3 ]]; then
+                echo "exceeded=true" >> $GITHUB_OUTPUT
+              else
+                echo "exceeded=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "exceeded=false" >> $GITHUB_OUTPUT
+              echo "attempts=0" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "exceeded=false" >> $GITHUB_OUTPUT
+            echo "attempts=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if max attempts exceeded
+        if: steps.attempts.outputs.exceeded == 'true'
+        run: |
+          echo "Max CI fix attempts (3) exceeded for feature ${{ steps.attempts.outputs.feature_id }}"
+          echo "Marking as blocked..."
+
+          if [[ -f prd.json && -n "${{ steps.attempts.outputs.feature_id }}" ]]; then
+            jq --arg id "${{ steps.attempts.outputs.feature_id }}" '
+              (.features[] | select(.id == $id)) |= . + {
+                status: "blocked",
+                blocked_reason: "CI failed 3+ times"
+              }
+            ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add prd.json
+            git commit -m "ci: mark ${{ steps.attempts.outputs.feature_id }} as blocked (max attempts)"
+            git push
+          fi
+          exit 0
+
+      - name: Claude Fix
+        if: steps.attempts.outputs.exceeded != 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            CI has failed on this branch. Your job is to fix the issues and commit the fix.
+
+            ## Failure Information
+            - Branch: ${{ github.event.workflow_run.head_branch }}
+            - Previous attempts: ${{ steps.attempts.outputs.attempts }}
+            - Feature ID: ${{ steps.attempts.outputs.feature_id }}
+
+            ## CI Logs
+            ```
+            $(cat combined.log | head -500)
+            ```
+
+            ## Instructions
+
+            1. **Analyze the failure**
+               - Read the error messages carefully
+               - Identify the root cause (test failure, lint error, type error, etc.)
+
+            2. **Fix the code**
+               - Make minimal changes to fix the issue
+               - Don't refactor unrelated code
+               - Keep the fix focused
+
+            3. **Verify locally**
+               - Run `npm test` to verify tests pass
+               - Run `npm run lint` to verify lint passes
+
+            4. **Commit the fix**
+               - Use message: "fix: resolve CI failure - [brief description]"
+               - Push to this branch (NOT to main)
+
+            ## Important
+            - Do NOT create a new PR
+            - Push directly to: ${{ github.event.workflow_run.head_branch }}
+            - Only fix what's broken, don't add features
+            - If you can't fix it, explain why in a comment
+
+      - name: Increment CI attempts
+        if: steps.attempts.outputs.exceeded != 'true' && steps.attempts.outputs.feature_id != ''
+        run: |
+          if [[ -f prd.json ]]; then
+            jq --arg id "${{ steps.attempts.outputs.feature_id }}" '
+              (.features[] | select(.id == $id)) |= . + {
+                ci_attempts: ((.ci_attempts // 0) + 1)
+              }
+            ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add prd.json
+            git commit -m "ci: increment attempt count for ${{ steps.attempts.outputs.feature_id }}" || true
+            git push || true
+          fi
+
+      - name: Notify Slack (optional)
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          STATUS="${{ job.status }}"
+          if [[ "$STATUS" == "success" ]]; then
+            MSG="🔧 Claude auto-fix attempted for ${{ github.event.workflow_run.head_branch }}"
+          else
+            MSG="❌ Claude auto-fix failed for ${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-type: application/json' \
+            -d "{\"text\":\"$MSG\"}" || true

@@ -1,0 +1,139 @@
+name: Claude CI/CD Pipeline
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run type check
+        run: npm run typecheck || true
+
+      - name: Run tests
+        run: npm test -- --coverage
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: false
+
+  review:
+    name: Claude Code Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          echo "files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | tr '\n' ' ')" >> $GITHUB_OUTPUT
+
+      - name: Claude Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request. Focus on:
+
+            1. **Code Quality**
+               - Logic errors or bugs
+               - Security vulnerabilities
+               - Performance issues
+
+            2. **Best Practices**
+               - Following project conventions
+               - Proper error handling
+               - Test coverage
+
+            3. **Style**
+               - Consistent naming
+               - Code organization
+               - Documentation
+
+            Changed files: ${{ steps.changed.outputs.files }}
+
+            Provide specific, actionable feedback. If the PR looks good, say so briefly.
+
+            Format your review as:
+            ## Summary
+            [1-2 sentence overview]
+
+            ## Issues Found
+            [List any issues, or "None" if clean]
+
+            ## Suggestions
+            [Optional improvements]
+
+      - name: Update PR status
+        if: success()
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "✅ Claude review complete. Check the Actions tab for details."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-prd:
+    name: Update PRD Status
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract feature ID from branch
+        id: feature
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          FEATURE_ID=$(echo "$BRANCH" | grep -oE 'feature/[^/]+' | sed 's/feature\///' || echo "")
+          echo "id=$FEATURE_ID" >> $GITHUB_OUTPUT
+
+      - name: Update CI status in prd.json
+        if: steps.feature.outputs.id != ''
+        run: |
+          if [[ -f prd.json ]]; then
+            STATUS="${{ needs.test.result == 'success' && 'passed' || 'failed' }}"
+            jq --arg id "${{ steps.feature.outputs.id }}" \
+               --arg status "$STATUS" '
+              (.features[] | select(.id == $id)) |= . + {ci_status: $status}
+            ' prd.json > prd.json.tmp && mv prd.json.tmp prd.json
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add prd.json
+            git commit -m "ci: update status for ${{ steps.feature.outputs.id }}" || true
+            git push || true
+          fi
