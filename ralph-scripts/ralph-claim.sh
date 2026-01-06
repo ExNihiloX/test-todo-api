@@ -1,11 +1,41 @@
 #!/usr/bin/env bash
 # ralph-claim.sh - Atomic feature claiming for parallel agents
 # Uses portable mkdir locking to ensure only one agent claims a feature
+#
+# KEY DESIGN: State (status, claims, etc) is stored in STATE_FILE (progress/state.json)
+# which is git-ignored. Specs (name, deps, acceptance criteria) are in PRD_FILE (prd.json)
+# which is tracked in git. This prevents state divergence across feature branches.
 
 set -euo pipefail
 
 source "$(dirname "$0")/ralph-config.sh"
 source "$(dirname "$0")/ralph-lock.sh"
+
+# =============================================================================
+# STATE FUNCTIONS (read/write from STATE_FILE)
+# =============================================================================
+
+# Get feature state from state.json
+get_feature_state() {
+  local feature_id="$1"
+  jq -r --arg id "$feature_id" '.features[] | select(.id == $id)' "$STATE_FILE"
+}
+
+# Get feature specs from prd.json (static, doesn't change)
+get_feature_specs() {
+  local feature_id="$1"
+  jq -r --arg id "$feature_id" '.features[] | select(.id == $id)' "$PRD_FILE"
+}
+
+# Combined: get feature with both specs and state
+get_feature() {
+  local feature_id="$1"
+  local specs state
+  specs=$(get_feature_specs "$feature_id")
+  state=$(get_feature_state "$feature_id")
+  # Merge state into specs (state takes precedence for overlapping keys)
+  echo "$specs" | jq --argjson state "$state" '. + $state'
+}
 
 # =============================================================================
 # CLAIM FUNCTIONS
@@ -14,21 +44,34 @@ source "$(dirname "$0")/ralph-lock.sh"
 # Get list of claimable features (pending, dependencies met)
 # Usage: get_claimable_features
 get_claimable_features() {
-  if [[ ! -f "$PRD_FILE" ]]; then
-    log_error "PRD file not found: $PRD_FILE"
+  if [[ ! -f "$STATE_FILE" ]]; then
+    log_error "State file not found: $STATE_FILE - run init_ralph first"
     return 1
   fi
 
-  jq -r '
-    # Get completed feature IDs
-    (.features | map(select(.status == "completed")) | map(.id)) as $completed |
+  # Get completed feature IDs from state
+  local completed
+  completed=$(jq -r '[.features[] | select(.status == "completed") | .id]' "$STATE_FILE")
 
-    # Find pending features where all dependencies are completed
+  # Find pending features where all dependencies are completed
+  # Dependencies come from PRD_FILE (specs), status from STATE_FILE
+  jq -r --argjson completed "$completed" '
     .features[] |
-    select(.status == "pending") |
-    select((.depends_on // []) - $completed | length == 0) |
+    select(
+      # Check state for pending status
+      (.id as $id | $completed | index($id) | not) and
+      # Check specs for dependencies
+      ((.depends_on // []) - $completed | length == 0)
+    ) |
     .id
-  ' "$PRD_FILE"
+  ' "$PRD_FILE" | while read -r id; do
+    # Double-check status in state file
+    local status
+    status=$(jq -r --arg id "$id" '.features[] | select(.id == $id) | .status' "$STATE_FILE")
+    if [[ "$status" == "pending" ]]; then
+      echo "$id"
+    fi
+  done
 }
 
 # Claim a specific feature for an agent
@@ -46,9 +89,9 @@ claim_feature() {
     return 1
   fi
 
-  # Check if feature is still claimable
+  # Check if feature is still claimable (from STATE_FILE)
   local current_status
-  current_status=$(jq -r --arg id "$feature_id" '.features[] | select(.id == $id) | .status' "$PRD_FILE")
+  current_status=$(jq -r --arg id "$feature_id" '.features[] | select(.id == $id) | .status' "$STATE_FILE")
 
   if [[ "$current_status" != "pending" ]]; then
     log_warn "Feature $feature_id is no longer pending (status: $current_status)"
@@ -56,10 +99,12 @@ claim_feature() {
     return 1
   fi
 
-  # Check dependencies are met
+  # Check dependencies are met (deps from PRD_FILE, status from STATE_FILE)
+  local completed
+  completed=$(jq -r '[.features[] | select(.status == "completed") | .id]' "$STATE_FILE")
+
   local deps_met
-  deps_met=$(jq -r --arg id "$feature_id" '
-    (.features | map(select(.status == "completed")) | map(.id)) as $completed |
+  deps_met=$(jq -r --arg id "$feature_id" --argjson completed "$completed" '
     .features[] | select(.id == $id) |
     ((.depends_on // []) - $completed | length == 0)
   ' "$PRD_FILE")
@@ -70,7 +115,7 @@ claim_feature() {
     return 1
   fi
 
-  # Claim the feature
+  # Claim the feature (update STATE_FILE only)
   local timestamp
   timestamp=$(date -Iseconds)
   local branch="${FEATURE_BRANCH_PREFIX}/${feature_id}"
@@ -85,7 +130,7 @@ claim_feature() {
       claimed_at: $ts,
       branch: $branch
     }
-  ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+  ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 
   release_lock "$lock_dir"
 
@@ -109,13 +154,19 @@ claim_next_feature() {
     return 1
   fi
 
-  # Find highest priority claimable feature
-  local feature_id
-  feature_id=$(jq -r '
-    (.features | map(select(.status == "completed")) | map(.id)) as $completed |
+  # Get completed features from state
+  local completed
+  completed=$(jq -r '[.features[] | select(.status == "completed") | .id]' "$STATE_FILE")
 
+  # Get pending features from state
+  local pending
+  pending=$(jq -r '[.features[] | select(.status == "pending") | .id]' "$STATE_FILE")
+
+  # Find highest priority claimable feature (priority from PRD, filtered by state)
+  local feature_id
+  feature_id=$(jq -r --argjson completed "$completed" --argjson pending "$pending" '
     [.features[] |
-      select(.status == "pending") |
+      select(.id as $id | $pending | index($id)) |
       select((.depends_on // []) - $completed | length == 0)
     ] |
     sort_by(.priority) |
@@ -129,7 +180,7 @@ claim_next_feature() {
     return 1
   fi
 
-  # Claim it
+  # Claim it (update STATE_FILE only)
   local timestamp
   timestamp=$(date -Iseconds)
   local branch="${FEATURE_BRANCH_PREFIX}/${feature_id}"
@@ -144,7 +195,7 @@ claim_next_feature() {
       claimed_at: $ts,
       branch: $branch
     }
-  ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+  ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 
   release_lock "$lock_dir"
 
@@ -175,7 +226,7 @@ release_claim() {
       claimed_by: null,
       claimed_at: null
     }
-  ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+  ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 
   release_lock "$lock_dir"
 
@@ -210,7 +261,7 @@ complete_feature() {
       completed_at: $ts,
       pr_url: $pr
     }
-  ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+  ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 
   release_lock "$lock_dir"
 
@@ -240,7 +291,7 @@ block_feature() {
       status: "blocked",
       blocked_reason: $reason
     }
-  ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+  ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 
   release_lock "$lock_dir"
 
@@ -271,31 +322,36 @@ update_ci_status() {
         ci_status: $status,
         ci_attempts: ((.ci_attempts // 0) + 1)
       }
-    ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+    ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
   else
     jq --arg id "$feature_id" \
        --arg status "$status" '
       (.features[] | select(.id == $id)) |= . + {
         ci_status: $status
       }
-    ' "$PRD_FILE" > "${PRD_FILE}.tmp" && mv "${PRD_FILE}.tmp" "$PRD_FILE"
+    ' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
   fi
 
   release_lock "$lock_dir"
   return 0
 }
 
-# Get feature details
-# Usage: get_feature "feature_id"
-get_feature() {
-  local feature_id="$1"
-  jq -r --arg id "$feature_id" '.features[] | select(.id == $id)' "$PRD_FILE"
-}
-
 # Get all in-progress features
 # Usage: get_in_progress_features
 get_in_progress_features() {
-  jq -r '.features[] | select(.status == "in_progress") | .id' "$PRD_FILE"
+  jq -r '.features[] | select(.status == "in_progress") | .id' "$STATE_FILE"
+}
+
+# Get count of completed features
+# Usage: get_completed_count
+get_completed_count() {
+  jq -r '[.features[] | select(.status == "completed")] | length' "$STATE_FILE"
+}
+
+# Get total feature count
+# Usage: get_total_count
+get_total_count() {
+  jq -r '.features | length' "$STATE_FILE"
 }
 
 # =============================================================================
@@ -328,8 +384,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     in-progress)
       get_in_progress_features
       ;;
+    completed-count)
+      get_completed_count
+      ;;
+    total-count)
+      get_total_count
+      ;;
     help|*)
-      echo "Usage: $0 {list|claim|claim-next|release|complete|block|status|in-progress}"
+      echo "Usage: $0 {list|claim|claim-next|release|complete|block|status|in-progress|completed-count|total-count}"
       echo ""
       echo "Commands:"
       echo "  list                    - List claimable features"
@@ -338,8 +400,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       echo "  release <id> [reason]   - Release a claim"
       echo "  complete <id> [pr_url]  - Mark feature as completed"
       echo "  block <id> <reason>     - Mark feature as blocked"
-      echo "  status <id>             - Get feature details"
+      echo "  status <id>             - Get feature details (specs + state)"
       echo "  in-progress             - List all in-progress features"
+      echo "  completed-count         - Get count of completed features"
+      echo "  total-count             - Get total feature count"
       ;;
   esac
 fi

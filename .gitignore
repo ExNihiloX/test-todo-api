@@ -29,3 +29,5 @@ coverage/
 
 # Progress files (local state)
 progress/*.log
+progress/state.json
+progress/.heartbeat-*
