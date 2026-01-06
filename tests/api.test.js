@@ -51,6 +51,59 @@ describe('Todo API', () => {
 
       expect(res.status).toBe(400);
     });
+
+    it('trims whitespace from title', async () => {
+      const res = await request(app)
+        .post('/api/todos')
+        .send({ title: '  Trimmed task  ' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.title).toBe('Trimmed task');
+    });
+
+    it('returns 400 if title is not a string', async () => {
+      const res = await request(app)
+        .post('/api/todos')
+        .send({ title: 123 });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 400 if title is null', async () => {
+      const res = await request(app)
+        .post('/api/todos')
+        .send({ title: null });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('persists created todo', async () => {
+      const createRes = await request(app)
+        .post('/api/todos')
+        .send({ title: 'Persisted task' });
+
+      expect(createRes.status).toBe(201);
+      const id = createRes.body.id;
+
+      const getRes = await request(app).get('/api/todos');
+      expect(getRes.body.todos).toContainEqual(
+        expect.objectContaining({ id, title: 'Persisted task' })
+      );
+    });
+
+    it('returns complete todo object structure', async () => {
+      const res = await request(app)
+        .post('/api/todos')
+        .send({ title: 'Structure test' });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('id');
+      expect(res.body).toHaveProperty('title');
+      expect(res.body).toHaveProperty('completed');
+      expect(typeof res.body.id).toBe('string');
+      expect(typeof res.body.title).toBe('string');
+      expect(typeof res.body.completed).toBe('boolean');
+    });
   });
 
   describe('PUT /api/todos/:id', () => {
