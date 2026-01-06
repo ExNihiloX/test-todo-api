@@ -7,6 +7,12 @@ set -euo pipefail
 source "$(dirname "$0")/ralph-config.sh"
 source "$(dirname "$0")/ralph-claim.sh"
 source "$(dirname "$0")/ralph-heartbeat.sh"
+source "$(dirname "$0")/ralph-notify.sh"
+source "$(dirname "$0")/ralph-decisions.sh"
+
+# Export for decision functions
+export AGENT_ID
+export FEATURE_ID
 
 # =============================================================================
 # AGENT CONFIGURATION
@@ -133,6 +139,11 @@ esac)
 When the feature is fully implemented, tested, and a PR is created:
 - Output: \`<promise>FEATURE_COMPLETE:$feature_id</promise>\`
 
+If you need a decision from the human (architecture choice, unclear requirement):
+- Output: \`<promise>DECISION_NEEDED:Your question here|Option1,Option2,Option3</promise>\`
+- Example: \`<promise>DECISION_NEEDED:Which database should I use?|PostgreSQL,MySQL,SQLite</promise>\`
+- The human will respond via Slack and work will continue
+
 If you encounter a blocker requiring human help:
 - Output: \`<promise>BLOCKED:$feature_id:reason here</promise>\`
 
@@ -151,13 +162,19 @@ PROMPT
 # Run the Ralph loop for a feature
 run_feature_loop() {
   local feature_id="$1"
+  export FEATURE_ID="$feature_id"
   local iteration=0
   local feature
   feature=$(get_feature "$feature_id")
   local branch
   branch=$(echo "$feature" | jq -r '.branch')
+  local name
+  name=$(echo "$feature" | jq -r '.name')
 
   agent_log "Starting work on feature: $feature_id"
+
+  # Notify Slack
+  notify_feature_started "$feature_id" "$name" "$AGENT_ID"
 
   # Create and checkout feature branch
   cd "$PROJECT_ROOT"
@@ -201,8 +218,42 @@ run_feature_loop() {
         local pr_url
         pr_url=$(gh pr view --json url -q '.url' 2>/dev/null || echo "")
 
+        # Get stats for notification
+        local files_changed
+        files_changed=$(git diff --stat "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null | tail -1 | grep -oE '[0-9]+ file' | grep -oE '[0-9]+' || echo "?")
+        local tests_passed="passed"
+
         complete_feature "$feature_id" "$pr_url"
+
+        # Rich notification with PR details
+        notify_feature_completed "$feature_id" "$name" "$pr_url" "$files_changed files" "$tests_passed"
+
         return 0
+      fi
+
+      # Check for decision needed promise
+      if echo "$output" | grep -qE "<promise>DECISION_NEEDED:"; then
+        local decision_info
+        decision_info=$(echo "$output" | grep -oE "<promise>DECISION_NEEDED:[^<]+" | sed "s/<promise>DECISION_NEEDED://")
+        local question="${decision_info%%|*}"
+        local options="${decision_info#*|}"
+
+        agent_log "Decision needed for $feature_id: $question"
+
+        # Ask human via Slack and wait
+        local answer
+        answer=$(await_decision "$question" "$options" "Feature: $feature_id" 3600 "")
+
+        if [[ -n "$answer" ]]; then
+          agent_log "Decision received: $answer"
+          # Continue - Claude will see the answer in context on next iteration
+          echo "DECISION:$question=$answer" >> "$prompt_file"
+        else
+          # No answer - block the feature
+          block_feature "$feature_id" "No decision received for: $question"
+          notify_blocked "$feature_id" "Waiting for decision: $question" "$AGENT_ID"
+          return 1
+        fi
       fi
 
       # Check for blocked promise
@@ -211,6 +262,7 @@ run_feature_loop() {
         reason=$(echo "$output" | grep -oE "<promise>BLOCKED:${feature_id}:[^<]+" | sed "s/<promise>BLOCKED:${feature_id}://")
         agent_log "Feature $feature_id blocked: $reason"
         block_feature "$feature_id" "$reason"
+        notify_blocked "$feature_id" "$reason" "$AGENT_ID"
         return 1
       fi
 
@@ -218,10 +270,12 @@ run_feature_loop() {
       if echo "$output" | grep -q "<promise>STUCK:${feature_id}</promise>"; then
         agent_log "Feature $feature_id stuck after $iteration iterations"
         block_feature "$feature_id" "Stuck after $iteration iterations"
+        notify_blocked "$feature_id" "Stuck after $iteration iterations" "$AGENT_ID"
         return 1
       fi
     else
       agent_log "Claude execution failed on iteration $iteration"
+      notify_error "Claude execution failed" "$feature_id" "$AGENT_ID"
     fi
 
     # Brief pause between iterations
