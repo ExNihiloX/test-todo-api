@@ -27,5 +27,7 @@ Thumbs.db
 # Test coverage
 coverage/
 
-# Progress files (local state)
+# Progress files (local state - git-ignored to prevent branch divergence)
 progress/*.log
+progress/state.json
+progress/.heartbeat-*

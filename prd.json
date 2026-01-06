@@ -66,8 +66,6 @@
       "description": "Basic Express server with /health endpoint",
       "priority": 1,
       "workflow_type": "direct",
-      "branch": "feature/todo-001",
-      "status": "pending",
       "depends_on": [],
       "api_endpoints": [],
       "packages_needed": [
@@ -80,13 +78,7 @@
         "Express server starts on PORT",
         "GET /health returns 200 OK",
         "Graceful shutdown on SIGTERM"
-      ],
-      "claimed_by": null,
-      "claimed_at": null,
-      "completed_at": null,
-      "pr_url": null,
-      "ci_status": null,
-      "ci_attempts": 0
+      ]
     },
     {
       "id": "todo-002",
@@ -94,8 +86,6 @@
       "description": "Simple in-memory array storage for todos",
       "priority": 2,
       "workflow_type": "tdd",
-      "branch": "feature/todo-002",
-      "status": "pending",
       "depends_on": [],
       "api_endpoints": [],
       "packages_needed": [
@@ -106,13 +96,7 @@
         "TodoStore class with CRUD methods",
         "Generates UUID for new todos",
         "Returns null for non-existent todos"
-      ],
-      "claimed_by": null,
-      "claimed_at": null,
-      "completed_at": null,
-      "pr_url": null,
-      "ci_status": null,
-      "ci_attempts": 0
+      ]
     },
     {
       "id": "todo-003",
@@ -120,8 +104,6 @@
       "description": "List all todos endpoint",
       "priority": 3,
       "workflow_type": "tdd",
-      "branch": "feature/todo-003",
-      "status": "pending",
       "depends_on": [
         "todo-001",
         "todo-002"
@@ -135,13 +117,7 @@
         "Returns array of todos",
         "Returns empty array if no todos",
         "Response includes id, title, completed fields"
-      ],
-      "claimed_by": null,
-      "claimed_at": null,
-      "completed_at": null,
-      "pr_url": null,
-      "ci_status": null,
-      "ci_attempts": 0
+      ]
     },
     {
       "id": "todo-004",
@@ -149,8 +125,6 @@
       "description": "Create new todo endpoint",
       "priority": 3,
       "workflow_type": "tdd",
-      "branch": "feature/todo-004",
-      "status": "pending",
       "depends_on": [
         "todo-001",
         "todo-002"
@@ -165,13 +139,7 @@
         "Returns 400 if title missing",
         "Sets completed to false by default",
         "Returns created todo with id"
-      ],
-      "claimed_by": null,
-      "claimed_at": null,
-      "completed_at": null,
-      "pr_url": null,
-      "ci_status": null,
-      "ci_attempts": 0
+      ]
     },
     {
       "id": "todo-005",
@@ -179,8 +147,6 @@
       "description": "Update existing todo endpoint",
       "priority": 4,
       "workflow_type": "tdd",
-      "branch": "feature/todo-005",
-      "status": "pending",
       "depends_on": [
         "todo-003",
         "todo-004"
@@ -194,13 +160,7 @@
         "Updates todo title and/or completed",
         "Returns 404 if todo not found",
         "Returns updated todo"
-      ],
-      "claimed_by": null,
-      "claimed_at": null,
-      "completed_at": null,
-      "pr_url": null,
-      "ci_status": null,
-      "ci_attempts": 0
+      ]
     },
     {
       "id": "todo-006",
@@ -208,8 +168,6 @@
       "description": "Delete todo endpoint",
       "priority": 4,
       "workflow_type": "tdd",
-      "branch": "feature/todo-006",
-      "status": "pending",
       "depends_on": [
         "todo-003",
         "todo-004"
@@ -223,13 +181,7 @@
         "Deletes todo by id",
         "Returns 404 if todo not found",
         "Returns success: true on delete"
-      ],
-      "claimed_by": null,
-      "claimed_at": null,
-      "completed_at": null,
-      "pr_url": null,
-      "ci_status": null,
-      "ci_attempts": 0
+      ]
     }
   ],
   "integration_tests": [

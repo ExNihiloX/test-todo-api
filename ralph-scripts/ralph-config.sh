@@ -14,6 +14,7 @@ PROJECT_FILE="${PROJECT_ROOT}/project.json"
 PROGRESS_DIR="${PROJECT_ROOT}/progress"
 CACHE_DIR="${PROJECT_ROOT}/.claude/cache"
 COST_LOG="${PROGRESS_DIR}/cost.log"
+STATE_FILE="${PROGRESS_DIR}/state.json"
 LOCK_PREFIX="/tmp/ralph-lock"
 
 # =============================================================================
@@ -84,13 +85,33 @@ notify_slack() {
   fi
 }
 
-# Initialize directories
+# Initialize directories and state file
 init_ralph() {
   mkdir -p "$PROGRESS_DIR" "$CACHE_DIR"
   touch "$COST_LOG"
 
   if [[ ! -f "$PRD_FILE" ]]; then
     log_warn "No prd.json found - run project-analyzer skill first"
+    return 1
+  fi
+
+  # Initialize state.json from prd.json if it doesn't exist
+  # State is kept separate from specs to avoid git conflicts across branches
+  if [[ ! -f "$STATE_FILE" ]]; then
+    log "Initializing state.json from prd.json"
+    jq '{
+      features: [.features[] | {
+        id: .id,
+        status: "pending",
+        claimed_by: null,
+        claimed_at: null,
+        completed_at: null,
+        pr_url: null,
+        branch: null,
+        ci_status: null,
+        ci_attempts: 0
+      }]
+    }' "$PRD_FILE" > "$STATE_FILE"
   fi
 }
 
@@ -144,7 +165,7 @@ check_budget() {
 export -f log log_error log_warn log_debug notify_slack init_ralph get_daily_cost log_cost check_budget
 
 # Export all variables
-export RALPH_DIR PROJECT_ROOT PRD_FILE PROJECT_FILE PROGRESS_DIR CACHE_DIR COST_LOG LOCK_PREFIX
+export RALPH_DIR PROJECT_ROOT PRD_FILE PROJECT_FILE PROGRESS_DIR CACHE_DIR COST_LOG STATE_FILE LOCK_PREFIX
 export NUM_AGENTS MAX_ITERATIONS_PER_FEATURE MAX_CI_ATTEMPTS STALE_CLAIM_THRESHOLD HEARTBEAT_INTERVAL
 export MAX_DAILY_COST_USD COST_PER_INPUT_TOKEN COST_PER_OUTPUT_TOKEN
 export SLACK_WEBHOOK_URL SLACK_CHANNEL LINEAR_TEAM_ID DEFAULT_BRANCH FEATURE_BRANCH_PREFIX
