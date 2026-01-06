@@ -86,6 +86,8 @@ notify_slack() {
 }
 
 # Initialize directories and state file
+# IMPORTANT: This should only be called ONCE at orchestrator startup
+# Never call from agents - they should only read/update existing state
 init_ralph() {
   mkdir -p "$PROGRESS_DIR" "$CACHE_DIR"
   touch "$COST_LOG"
@@ -95,8 +97,8 @@ init_ralph() {
     return 1
   fi
 
-  # Initialize state.json from prd.json if it doesn't exist
-  # State is kept separate from specs to avoid git conflicts across branches
+  # Initialize state.json from prd.json ONLY if it doesn't exist
+  # NEVER overwrite existing state - that would lose progress!
   if [[ ! -f "$STATE_FILE" ]]; then
     log "Initializing state.json from prd.json"
     jq '{
@@ -112,7 +114,19 @@ init_ralph() {
         ci_attempts: 0
       }]
     }' "$PRD_FILE" > "$STATE_FILE"
+  else
+    log_debug "State file exists, preserving existing progress"
   fi
+}
+
+# Ensure state file exists (safe to call multiple times)
+# Unlike init_ralph, this never overwrites
+ensure_state_file() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    log_error "State file missing! Run orchestrator first to initialize."
+    return 1
+  fi
+  return 0
 }
 
 # Get today's total cost
@@ -162,7 +176,7 @@ check_budget() {
 }
 
 # Export all functions for subshells
-export -f log log_error log_warn log_debug notify_slack init_ralph get_daily_cost log_cost check_budget
+export -f log log_error log_warn log_debug notify_slack init_ralph ensure_state_file get_daily_cost log_cost check_budget
 
 # Export all variables
 export RALPH_DIR PROJECT_ROOT PRD_FILE PROJECT_FILE PROGRESS_DIR CACHE_DIR COST_LOG STATE_FILE LOCK_PREFIX

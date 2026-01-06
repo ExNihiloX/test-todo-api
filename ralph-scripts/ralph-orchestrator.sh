@@ -196,17 +196,36 @@ start_heartbeat() {
 wait_for_completion() {
   log "Waiting for all features to complete..."
 
+  # Get expected feature count from PRD (source of truth for total)
+  local expected_total
+  expected_total=$(jq -r '.features | length' "$PRD_FILE" 2>/dev/null || echo 0)
+
   while true; do
     sleep 30
 
-    # Check if we're done (read from STATE_FILE)
-    local pending in_progress
-    pending=$(jq -r '[.features[] | select(.status == "pending")] | length' "$STATE_FILE" 2>/dev/null || echo 0)
-    in_progress=$(jq -r '[.features[] | select(.status == "in_progress")] | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    # Validate state file exists and is readable
+    if [[ ! -f "$STATE_FILE" ]]; then
+      log_error "State file missing! This should not happen."
+      continue
+    fi
 
-    if [[ "$pending" == "0" && "$in_progress" == "0" ]]; then
-      log "All features complete!"
+    # Check completion status (read from STATE_FILE)
+    local pending in_progress completed total
+    pending=$(jq -r '[.features[] | select(.status == "pending")] | length' "$STATE_FILE" 2>/dev/null || echo 999)
+    in_progress=$(jq -r '[.features[] | select(.status == "in_progress")] | length' "$STATE_FILE" 2>/dev/null || echo 999)
+    completed=$(jq -r '[.features[] | select(.status == "completed")] | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    total=$(jq -r '.features | length' "$STATE_FILE" 2>/dev/null || echo 0)
+
+    # ROBUST CHECK: Only exit if ALL features are completed
+    # Don't trust pending/in_progress == 0 alone (state could be corrupted)
+    if [[ "$completed" == "$expected_total" && "$expected_total" -gt 0 ]]; then
+      log "All $completed features complete!"
       return 0
+    fi
+
+    # Sanity check: if state looks wrong, warn but continue
+    if [[ "$total" != "$expected_total" ]]; then
+      log_warn "State file has $total features but PRD has $expected_total - possible corruption"
     fi
 
     # Check if all agents have died
