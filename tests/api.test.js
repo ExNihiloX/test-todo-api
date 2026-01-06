@@ -22,6 +22,22 @@ describe('Todo API', () => {
       expect(res.status).toBe(200);
       expect(res.body.todos).toHaveLength(2);
     });
+
+    it('returns todos with id, title, completed fields', async () => {
+      todosRouter.store.create('Test task');
+
+      const res = await request(app).get('/api/todos');
+      expect(res.status).toBe(200);
+      expect(res.body.todos).toHaveLength(1);
+
+      const todo = res.body.todos[0];
+      expect(todo).toHaveProperty('id');
+      expect(todo).toHaveProperty('title', 'Test task');
+      expect(todo).toHaveProperty('completed', false);
+      expect(typeof todo.id).toBe('string');
+      expect(typeof todo.title).toBe('string');
+      expect(typeof todo.completed).toBe('boolean');
+    });
   });
 
   describe('POST /api/todos', () => {
