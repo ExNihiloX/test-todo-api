@@ -9,7 +9,7 @@ router.get('/', (req, res) => {
   try {
     const todos = store.getAll();
     res.json({ todos });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -25,7 +25,7 @@ router.post('/', (req, res) => {
 
     const todo = store.create(title.trim());
     res.status(201).json(todo);
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -57,7 +57,7 @@ router.put('/:id', (req, res) => {
 
     const updated = store.update(id, updates);
     res.json(updated);
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -73,7 +73,7 @@ router.delete('/:id', (req, res) => {
     }
 
     res.json({ success: true });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
