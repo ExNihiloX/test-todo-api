@@ -27,11 +27,11 @@ check_config() {
 # Execute GraphQL query/mutation
 graphql() {
   local query="$1"
-  local variables="${2:-{\}}"
+  local variables="${2:-}"
 
   # Build payload - handle empty variables
   local payload
-  if [[ "$variables" == "{}" || -z "$variables" ]]; then
+  if [[ -z "$variables" || "$variables" == "{}" ]]; then
     payload=$(jq -n --arg q "$query" '{query: $q, variables: {}}')
   else
     # Write variables to temp file to avoid shell escaping issues
@@ -446,39 +446,50 @@ Please reply with your choice (number) or provide alternative guidance."
   echo "$timestamp"
 }
 
-# Wait for and parse decision response
+# Wait for and parse decision response (uses poll loop for long waits)
 await_decision() {
   local issue_id="$1"
   local since="$2"
-  local timeout="${3:-600}"
+  local max_hours="${3:-6}"  # Default 6 hours max wait
 
-  echo "Waiting for decision on Linear issue..." >&2
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  echo "Waiting for decision on Linear issue (up to ${max_hours}h)..." >&2
+
+  # Calculate iterations: each poll is ~2 min, so iterations = hours * 30
+  local max_iterations=$((max_hours * 30))
 
   local response
-  response=$(poll_comments "$issue_id" "$since" "$timeout")
+  response=$("$script_dir/ralph-poll-loop.sh" "$issue_id" "$since" "$max_iterations" 120 30 2>&1)
 
-  if [[ "$response" == "TIMEOUT" ]]; then
+  # Check if we got a response
+  if [[ "$response" == *"RESPONSE_RECEIVED"* ]]; then
+    # Extract JSON from response
+    local json
+    json=$(echo "$response" | sed -n '/RESPONSE_RECEIVED/,$ p' | tail -n +2)
+
+    # Extract the response body
+    local body
+    body=$(echo "$json" | jq -r '.body')
+
+    # Try to parse as number (option selection)
+    local choice
+    choice=$(echo "$body" | grep -oE '^[0-9]+' | head -1)
+
+    if [[ -n "$choice" ]]; then
+      echo "$choice"
+    else
+      # Return full text for custom response
+      echo "$body"
+    fi
+
+    # Update status back to In Progress
+    update_status "$issue_id" "${LINEAR_STATE_IN_PROGRESS:-In Progress}" >/dev/null
+  else
     echo "TIMEOUT"
     return 1
   fi
-
-  # Extract the response body
-  local body
-  body=$(echo "$response" | jq -r '.body')
-
-  # Try to parse as number (option selection)
-  local choice
-  choice=$(echo "$body" | grep -oE '^[0-9]+' | head -1)
-
-  if [[ -n "$choice" ]]; then
-    echo "$choice"
-  else
-    # Return full text for custom response
-    echo "$body"
-  fi
-
-  # Update status back to In Progress
-  update_status "$issue_id" "${LINEAR_STATE_IN_PROGRESS:-In Progress}" >/dev/null
 }
 
 # =============================================================================
@@ -572,6 +583,25 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       fi
       poll_comments "$2" "$3" "${4:-300}" "${5:-30}"
       ;;
+    poll-loop)
+      if [[ -z "${2:-}" || -z "${3:-}" ]]; then
+        echo "Usage: $0 poll-loop <issue-id> <since-timestamp> [max-hours]" >&2
+        exit 1
+      fi
+      SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      max_hours="${4:-6}"
+      max_iterations=$((max_hours * 30))
+      "$SCRIPT_DIR/ralph-poll-loop.sh" "$2" "$3" "$max_iterations" 120 30
+      ;;
+    decision)
+      if [[ -z "${2:-}" || -z "${3:-}" || -z "${4:-}" ]]; then
+        echo "Usage: $0 decision <issue-id> <context> <options-json> [max-hours]" >&2
+        echo "Example: $0 decision abc-123 'Which approach?' '[\"Option A\",\"Option B\"]' 2" >&2
+        exit 1
+      fi
+      timestamp=$(request_decision "$2" "$3" "$4")
+      await_decision "$2" "$timestamp" "${5:-6}"
+      ;;
     help|*)
       echo "Usage: $0 <command> [args]"
       echo ""
@@ -584,7 +614,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       echo "  status <id> <state>     - Update issue status"
       echo "  comment <id> <body>     - Add comment to issue"
       echo "  comments <id> [since]   - Get issue comments"
-      echo "  poll <id> <since>       - Poll for new comments"
+      echo "  poll <id> <since>       - Poll for new comments (short)"
+      echo "  poll-loop <id> <since>  - Poll loop for hours (autonomous)"
+      echo "  decision <id> <ctx> <opts> - Full decision flow (block+poll+unblock)"
       echo ""
       echo "Environment:"
       echo "  LINEAR_API_KEY          - Required: API key from Linear"
