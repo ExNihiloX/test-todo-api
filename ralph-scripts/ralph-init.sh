@@ -181,6 +181,16 @@ echo "📖 Creating CLAUDE.md..."
 cat > "$PROJECT_PATH/CLAUDE.md" << 'CLAUDEMD'
 # Project Instructions for Claude
 
+## Startup
+
+**Always source ~/.zshrc first** to load environment variables (LINEAR_API_KEY, LINEAR_TEAM_ID, etc.):
+
+```bash
+source ~/.zshrc
+```
+
+Only ask the user if a specific required variable is missing after sourcing.
+
 ## System Overview
 
 This project uses the **Ralph Autonomous Development System** with three roles:
@@ -260,11 +270,11 @@ All code must:
 
 ## Environment
 
-Required environment variables:
+Required environment variables (should be in ~/.zshrc):
 - `LINEAR_API_KEY` - For blocking/unblocking workflow
 - `LINEAR_TEAM_ID` - Your Linear team
 
-Source before starting: `source .env`
+Always run `source ~/.zshrc` at startup. Only ask user if something specific is missing.
 CLAUDEMD
 echo "   ✓ Created CLAUDE.md"
 
